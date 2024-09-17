@@ -26,10 +26,97 @@
 #include "widgets/splits/SplitContainer.hpp"
 
 #include <QCompleter>
+#include <QMap>
 #include <QPainter>
 #include <QSignalBlocker>
 
 #include <functional>
+
+static const QMap<QChar, QChar> REPLACEMENTS = {
+    {'a', QChar(0x0430)},  // Latin 'a' to Cyrillic 'а' (U+0430)
+    {'c', QChar(0x0441)},  // Latin 'c' to Cyrillic 'с' (U+0441)
+    {'d', QChar(0x0501)},  // Latin 'd' to Cyrillic 'ԁ' (U+0501)
+    {'e', QChar(0x0435)},  // Latin 'e' to Cyrillic 'е' (U+0435)
+    {'g', QChar(0x0261)},  // Latin 'g' to Latin    'ɡ' (U+0261)
+    {'h', QChar(0x04bb)},  // Latin 'h' to Cyrillic 'һ' (U+04BB)
+    {'i', QChar(0x0456)},  // Latin 'i' to Cyrillic 'і' (U+0456)
+    {'j', QChar(0x0458)},  // Latin 'j' to Cyrillic 'ј' (U+0458)
+    //    {'k', QChar(0x03ba)},  // Latin 'k' to Greek    'κ' (U+03BA)
+    {'l', QChar(0x04cf)},  // Latin 'l' to Cyrillic 'ӏ' (U+04CF)
+    {'o', QChar(0x043e)},  // Latin 'o' to Cyrillic 'о' (U+043E)
+    {'p', QChar(0x0440)},  // Latin 'p' to Cyrillic 'р' (U+0440)
+    {'q', QChar(0x051b)},  // Latin 'q' to Cyrillic 'ԛ' (U+051B)
+    //    {'r', QChar(0x0433)},  // Latin 'r' to Cyrillic 'г' (U+0433)
+    {'s', QChar(0x0455)},  // Latin 's' to Cyrillic 'ѕ' (U+0455)
+    //    {'u', QChar(0x03c5)},  // Latin 'u' to Greek    'υ' (U+03C5)
+    //    {'v', QChar(0x03bd)},  // Latin 'v' to Greek    'ν' (U+03BD)
+    {'w', QChar(0x051d)},  // Latin 'w' to Cyrillic 'ԝ' (U+051D)
+    {'x', QChar(0x0445)},  // Latin 'x' to Cyrillic 'х' (U+0445)
+    {'y', QChar(0x0443)},  // Latin 'y' to Cyrillic 'у' (U+0443)
+};
+
+inline QString replaceLetters(const QMap<QChar, QChar> &replacements,
+                              const QString &word)
+{
+    QString output;
+    output.reserve(word.length());
+
+    for (const QChar &ch : word)
+    {
+        if (replacements.contains(ch))
+        {
+            output.append(replacements[ch]);
+        }
+        else
+        {
+            output.append(ch);
+        }
+    }
+    return output;
+}
+
+inline bool isAlphabetic(const QString &word)
+{
+    for (const QChar &ch : word)
+    {
+        if (!ch.isLetter())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void replaceWordsWithUnicodeHomoglyphs(const QMap<QChar, QChar> &replacements,
+                                       QStringList &words)
+{
+    if (words.isEmpty())
+    {
+        return;
+    }
+
+    // First word is a command, skip it
+    bool skipFirstWord = words.first().startsWith('/');
+
+    for (int i = skipFirstWord ? 1 : 0; i < words.size(); ++i)
+    {
+        // If word ends with '<', strip '<'
+        // and keep the rest of the word unmodified
+        if (words[i].length() > 1 && words[i].endsWith('<'))
+        {
+            words[i].remove(words[i].length() - 1, 1);
+            continue;
+        }
+
+        // Replace characters with homoglyphs
+        // if word is composed of only lowercase
+        // non-symbols characters
+        if (words[i].isLower() && isAlphabetic(words[i]))
+        {
+            words[i] = replaceLetters(replacements, words[i]);
+        }
+    }
+}
 
 namespace chatterino {
 
@@ -354,6 +441,12 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
         QString sendMessage =
             getApp()->getCommands()->execCommand(message, c, false);
 
+        QStringList words = sendMessage.split(' ');
+
+        replaceWordsWithUnicodeHomoglyphs(REPLACEMENTS, words);
+
+        sendMessage = words.join(' ');
+
         c->sendMessage(sendMessage);
 
         this->postMessageSend(message, arguments);
@@ -390,6 +483,12 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
         QString sendMessage =
             getApp()->getCommands()->execCommand(message, c, false);
 
+        QStringList words = sendMessage.split(' ');
+
+        replaceWordsWithUnicodeHomoglyphs(REPLACEMENTS, words);
+
+        sendMessage = words.join(' ');
+
         // Reply within TwitchChannel
         tc->sendReply(sendMessage, this->replyTarget_->id);
 
@@ -414,6 +513,12 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
     message = message.replace('\n', ' ');
     QString sendMessage =
         getApp()->getCommands()->execCommand(message, c, false);
+
+    QStringList words = sendMessage.split(' ');
+
+    replaceWordsWithUnicodeHomoglyphs(REPLACEMENTS, words);
+
+    sendMessage = words.join(' ');
 
     // Reply within TwitchChannel
     tc->sendReply(sendMessage, this->replyTarget_->id);
