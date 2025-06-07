@@ -1,7 +1,5 @@
 #pragma once
 
-#include "singletons/NativeMessaging.hpp"
-
 #include <cassert>
 #include <memory>
 
@@ -55,11 +53,12 @@ class SeventvEventAPI;
 class ILinkResolver;
 class IStreamerMode;
 class ITwitchUsers;
+class NativeMessagingServer;
 namespace pronouns {
-    class Pronouns;
+class Pronouns;
 }  // namespace pronouns
 namespace eventsub {
-    class IController;
+class IController;
 }  // namespace eventsub
 
 class IApplication
@@ -141,7 +140,8 @@ public:
 
     void initialize(Settings &settings, const Paths &paths);
     void load();
-    void save();
+    void aboutToQuit();
+    void stop();
 
     int run();
 
@@ -150,7 +150,7 @@ public:
 private:
     std::unique_ptr<Theme> themes;
     std::unique_ptr<Fonts> fonts;
-    const std::unique_ptr<Logging> logging;
+    std::unique_ptr<Logging> logging;
     std::unique_ptr<Emotes> emotes;
     std::unique_ptr<AccountController> accounts;
     std::unique_ptr<eventsub::IController> eventSub;
@@ -237,11 +237,9 @@ public:
     ITwitchUsers *getTwitchUsers() override;
 
 private:
-    void initBttvLiveUpdates();
-    void initSeventvEventAPI();
     void initNm(const Paths &paths);
 
-    NativeMessagingServer nmServer;
+    std::unique_ptr<NativeMessagingServer> nmServer;
     Updates &updates;
 
     bool initialized{false};
@@ -251,5 +249,7 @@ IApplication *getApp();
 
 /// Might return `nullptr` if the app is being destroyed
 IApplication *tryGetApp();
+
+bool isAppAboutToQuit();
 
 }  // namespace chatterino
