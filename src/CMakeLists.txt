@@ -215,6 +215,13 @@ set(SOURCE_FILES
         controllers/ignores/IgnorePhrase.cpp
         controllers/ignores/IgnorePhrase.hpp
 
+        controllers/inputreplacement/InputReplacement.cpp
+        controllers/inputreplacement/InputReplacement.hpp
+        controllers/inputreplacement/InputReplacementController.cpp
+        controllers/inputreplacement/InputReplacementController.hpp
+        controllers/inputreplacement/InputReplacementModel.cpp
+        controllers/inputreplacement/InputReplacementModel.hpp
+
         controllers/moderationactions/ModerationAction.cpp
         controllers/moderationactions/ModerationAction.hpp
         controllers/moderationactions/ModerationActionModel.cpp
@@ -734,6 +741,8 @@ set(SOURCE_FILES
         widgets/settingspages/HighlightingPage.hpp
         widgets/settingspages/IgnoresPage.cpp
         widgets/settingspages/IgnoresPage.hpp
+        widgets/settingspages/InputReplacementPage.cpp
+        widgets/settingspages/InputReplacementPage.hpp
         widgets/settingspages/KeyboardSettingsPage.cpp
         widgets/settingspages/KeyboardSettingsPage.hpp
         widgets/settingspages/ModerationPage.cpp

@@ -10,6 +10,7 @@
 #include "controllers/highlights/HighlightController.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
 #include "controllers/ignores/IgnoreController.hpp"
+#include "controllers/inputreplacement/InputReplacementController.hpp"
 #include "controllers/notifications/NotificationController.hpp"
 #include "controllers/sound/ISoundController.hpp"
 #include "providers/bttv/BttvEmotes.hpp"
@@ -175,6 +176,7 @@ Application::Application(Settings &_settings, const Paths &paths,
     , commands(new CommandController(paths))
     , notifications(new NotificationController)
     , highlights(new HighlightController(_settings, this->accounts.get()))
+    , inputReplacements(new InputReplacementController(paths))
     , twitch(new TwitchIrcServer)
     , ffzBadges(new FfzBadges)
     , seventvBadges(new SeventvBadges)
@@ -414,6 +416,14 @@ HighlightController *Application::getHighlights()
     return this->highlights.get();
 }
 
+InputReplacementController *Application::getInputReplacements()
+{
+    assertInGuiThread();
+    assert(this->inputReplacements);
+
+    return this->inputReplacements.get();
+}
+
 FfzBadges *Application::getFfzBadges()
 {
     assertInGuiThread();
@@ -600,6 +610,7 @@ void Application::save()
 {
     this->hotkeys->save();
     this->windows->save();
+    this->inputReplacements->save();
 }
 
 void Application::initNm(const Paths &paths)

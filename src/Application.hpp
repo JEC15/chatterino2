@@ -18,6 +18,7 @@ class AccountController;
 class NotificationController;
 class HighlightController;
 class HotkeyController;
+class InputReplacementController;
 class IUserDataController;
 class UserDataController;
 class ISoundController;
@@ -87,6 +88,7 @@ public:
     virtual CommandController *getCommands() = 0;
     virtual HighlightController *getHighlights() = 0;
     virtual NotificationController *getNotifications() = 0;
+    virtual InputReplacementController *getInputReplacements() = 0;
     virtual ITwitchIrcServer *getTwitch() = 0;
     virtual PubSub *getTwitchPubSub() = 0;
     virtual ILogging *getChatLogger() = 0;
@@ -161,6 +163,7 @@ private:
     std::unique_ptr<CommandController> commands;
     std::unique_ptr<NotificationController> notifications;
     std::unique_ptr<HighlightController> highlights;
+    std::unique_ptr<InputReplacementController> inputReplacements;
     std::unique_ptr<TwitchIrcServer> twitch;
     std::unique_ptr<FfzBadges> ffzBadges;
     std::unique_ptr<SeventvBadges> seventvBadges;
@@ -203,6 +206,7 @@ public:
     CommandController *getCommands() override;
     NotificationController *getNotifications() override;
     HighlightController *getHighlights() override;
+    InputReplacementController *getInputReplacements() override;
     ITwitchIrcServer *getTwitch() override;
     PubSub *getTwitchPubSub() override;
     ILogging *getChatLogger() override;

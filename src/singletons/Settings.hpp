@@ -532,6 +532,10 @@ public:
 
     BoolSetting highlightMentions = {"/highlighting/mentions", true};
 
+    /// Input Replacement
+    BoolSetting globallyEnableInputReplacements = {
+        "/inputReplacement/globallyEnableInputReplacements", true};
+
     /// Filtering
     BoolSetting excludeUserMessagesFromFilter = {
         "/filtering/excludeUserMessages", false};

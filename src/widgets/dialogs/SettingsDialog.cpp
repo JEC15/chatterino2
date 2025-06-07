@@ -4,6 +4,7 @@
 #include "common/Args.hpp"
 #include "controllers/commands/CommandController.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
+#include "controllers/inputreplacement/InputReplacementController.hpp"
 #include "singletons/Settings.hpp"
 #include "util/LayoutCreator.hpp"
 #include "widgets/BaseWindow.hpp"
@@ -17,6 +18,7 @@
 #include "widgets/settingspages/GeneralPage.hpp"
 #include "widgets/settingspages/HighlightingPage.hpp"
 #include "widgets/settingspages/IgnoresPage.hpp"
+#include "widgets/settingspages/InputReplacementPage.hpp"
 #include "widgets/settingspages/KeyboardSettingsPage.hpp"
 #include "widgets/settingspages/ModerationPage.hpp"
 #include "widgets/settingspages/NicknamesPage.hpp"
@@ -242,6 +244,7 @@ void SettingsDialog::addTabs()
     this->addTab([]{return new CommandPage;},          "Commands",       ":/settings/commands.svg");
     this->addTab([]{return new HighlightingPage;},     "Highlights",     ":/settings/notifications.svg");
     this->addTab([]{return new IgnoresPage;},          "Ignores",        ":/settings/ignore.svg");
+    this->addTab([]{return new InputReplacementPage;}, "Input Replace",  ":/settings/commands.svg");
     this->addTab([]{return new FiltersPage;},          "Filters",        ":/settings/filters.svg");
     this->ui_.tabContainer->addSpacing(16);
     this->addTab([]{return new KeyboardSettingsPage;}, "Hotkeys",        ":/settings/keybinds.svg");
@@ -435,6 +438,7 @@ void SettingsDialog::onOkClicked()
     if (!getApp()->getArgs().dontSaveSettings)
     {
         getApp()->getCommands()->save();
+        getApp()->getInputReplacements()->save();
     }
 
     getSettings()->requestSave();

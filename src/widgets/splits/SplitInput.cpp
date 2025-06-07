@@ -5,6 +5,7 @@
 #include "common/QLogging.hpp"
 #include "controllers/commands/CommandController.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
+#include "controllers/inputreplacement/InputReplacementController.hpp"
 #include "messages/Link.hpp"
 #include "messages/Message.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
@@ -365,6 +366,9 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
         message = message.replace('\n', ' ');
         QString sendMessage =
             getApp()->getCommands()->execCommand(message, c, false);
+
+        getApp()->getInputReplacements()->replaceCharactersInMessage(
+            sendMessage);
 
         c->sendMessage(sendMessage);
 
