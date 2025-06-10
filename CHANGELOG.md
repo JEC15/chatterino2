@@ -2,8 +2,8 @@
 
 ## Unversioned
 
-- Minor (Fork): Add tests for input replacement feature. ([`b392a7cd`](https://github.com/JEC15/chatterino2/commit/b392a7cdc7a2a4f92fa549f8882df798d079dc9b))
-- Minor (Fork): Add input replacement feature. ([`60b3f9a1`](https://github.com/JEC15/chatterino2/commit/60b3f9a1e0a35253cfdc5da7b3a84c8de26cfe4f))
+- Minor (Fork): Add tests for input replacement feature.
+- Minor (Fork): Add input replacement feature.
 - Minor: Added user notes to the user info dialog (when clicking a username). (#6122)
 - Minor: Added cached emotes fallback when fetching from a provider fails. (#6125, #6229)
 - Minor: Add an option for the reduced opacity of message history. (#6121)
