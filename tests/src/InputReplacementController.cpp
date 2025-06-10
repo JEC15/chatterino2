@@ -147,15 +147,10 @@ TEST_F(TestInputReplacementController, replaceCharactersInMesssage)
             .input = "Foo Baz",
             .expectedMessage = "Fo Bz",
         },
-        {
-            .replacements =
-                {
-                    regexReplace("\\b([a-z]+)(?:($)|( +))", "\\1_\\3"),
-                    regexReplace("\\b([a-z]+)(<)", "\\1")
-                },
-            .input = "abc def gHi jkl< mno p",
-            .expectedMessage = "abc_ def_ gHi jkl mno_ p_"
-        },
+        {.replacements = {regexReplace("\\b([a-z]+)(?:($)|( +))", "\\1_\\3"),
+                          regexReplace("\\b([a-z]+)(<)", "\\1")},
+         .input = "abc def gHi jkl< mno p",
+         .expectedMessage = "abc_ def_ gHi jkl mno_ p_"},
     };
 
     for (const auto &test : testCases)
