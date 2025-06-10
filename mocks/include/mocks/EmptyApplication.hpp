@@ -121,6 +121,13 @@ public:
         return nullptr;
     }
 
+    InputReplacementController *getInputReplacements() override
+    {
+        assert(false && "EmptyApplication::getInputReplacements was called "
+                        "without being initialized");
+        return nullptr;
+    }
+
     ITwitchIrcServer *getTwitch() override
     {
         assert(
