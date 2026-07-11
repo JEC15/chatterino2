@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2018 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "controllers/highlights/HighlightModel.hpp"
 
 #include "Application.hpp"
@@ -259,6 +263,60 @@ void HighlightModel::afterInit()
     setColorItem(automodRow[Column::Color], *automodColor, false);
 
     this->insertCustomRow(automodRow, HighlightRowIndexes::AutomodRow);
+
+    std::vector<QStandardItem *> watchStreakRow = this->createRow();
+    setBoolItem(watchStreakRow[Column::Pattern],
+                getSettings()->enableWatchStreakHighlight.getValue(), true,
+                false);
+    watchStreakRow[Column::Pattern]->setData("Watch Streaks", Qt::DisplayRole);
+    watchStreakRow[Column::ShowInMentions]->setFlags({});
+    watchStreakRow[Column::FlashTaskbar]->setFlags({});
+    watchStreakRow[Column::PlaySound]->setFlags({});
+    watchStreakRow[Column::UseRegex]->setFlags({});
+    watchStreakRow[Column::CaseSensitive]->setFlags({});
+    watchStreakRow[Column::SoundPath]->setFlags(Qt::NoItemFlags);
+
+    auto watchStreakColor =
+        ColorProvider::instance().color(ColorType::WatchStreak);
+    setColorItem(watchStreakRow[Column::Color], *watchStreakColor, false);
+
+    this->insertCustomRow(watchStreakRow, HighlightRowIndexes::WatchStreakRow);
+
+    std::vector<QStandardItem *> announcementRow = this->createRow();
+    setBoolItem(announcementRow[Column::Pattern],
+                getSettings()->enableAnnouncementHighlight.getValue(), true,
+                false);
+    announcementRow[Column::Pattern]->setData("Announcements", Qt::DisplayRole);
+    announcementRow[Column::ShowInMentions]->setFlags({});
+    announcementRow[Column::FlashTaskbar]->setFlags({});
+    announcementRow[Column::PlaySound]->setFlags({});
+    announcementRow[Column::UseRegex]->setFlags({});
+    announcementRow[Column::CaseSensitive]->setFlags({});
+    announcementRow[Column::SoundPath]->setFlags(Qt::NoItemFlags);
+
+    auto announcementColor =
+        ColorProvider::instance().color(ColorType::AnnouncementHighlight);
+    setColorItem(announcementRow[Column::Color], *announcementColor, false);
+
+    this->insertCustomRow(announcementRow,
+                          HighlightRowIndexes::AnnouncementRow);
+
+    std::vector<QStandardItem *> coloredAnnouncementRow = this->createRow();
+    setBoolItem(coloredAnnouncementRow[Column::Pattern],
+                getSettings()->enableColoredAnnouncementHighlight.getValue(),
+                true, false);
+    coloredAnnouncementRow[Column::Pattern]->setData("Colored Announcements",
+                                                     Qt::DisplayRole);
+    coloredAnnouncementRow[Column::ShowInMentions]->setFlags({});
+    coloredAnnouncementRow[Column::FlashTaskbar]->setFlags({});
+    coloredAnnouncementRow[Column::PlaySound]->setFlags({});
+    coloredAnnouncementRow[Column::UseRegex]->setFlags({});
+    coloredAnnouncementRow[Column::CaseSensitive]->setFlags({});
+    coloredAnnouncementRow[Column::SoundPath]->setFlags(Qt::NoItemFlags);
+    coloredAnnouncementRow[Column::Color]->setFlags(Qt::NoItemFlags);
+
+    this->insertCustomRow(coloredAnnouncementRow,
+                          HighlightRowIndexes::ColoredAnnouncementRow);
 }
 
 void HighlightModel::customRowSetData(const std::vector<QStandardItem *> &row,
@@ -283,6 +341,11 @@ void HighlightModel::customRowSetData(const std::vector<QStandardItem *> &row,
                 {
                     getSettings()->enableSubHighlight.setValue(value.toBool());
                 }
+                else if (rowIndex == HighlightRowIndexes::WatchStreakRow)
+                {
+                    getSettings()->enableWatchStreakHighlight.setValue(
+                        value.toBool());
+                }
                 else if (rowIndex == HighlightRowIndexes::RedeemedRow)
                 {
                     getSettings()->enableRedeemedHighlight.setValue(
@@ -306,6 +369,17 @@ void HighlightModel::customRowSetData(const std::vector<QStandardItem *> &row,
                 else if (rowIndex == HighlightRowIndexes::AutomodRow)
                 {
                     getSettings()->enableAutomodHighlight.setValue(
+                        value.toBool());
+                }
+                else if (rowIndex == HighlightRowIndexes::AnnouncementRow)
+                {
+                    getSettings()->enableAnnouncementHighlight.setValue(
+                        value.toBool());
+                }
+                else if (rowIndex ==
+                         HighlightRowIndexes::ColoredAnnouncementRow)
+                {
+                    getSettings()->enableColoredAnnouncementHighlight.setValue(
                         value.toBool());
                 }
             }
@@ -489,6 +563,11 @@ void HighlightModel::customRowSetData(const std::vector<QStandardItem *> &row,
                     setColor(getSettings()->subHighlightColor,
                              ColorType::Subscription);
                 }
+                else if (rowIndex == HighlightRowIndexes::WatchStreakRow)
+                {
+                    setColor(getSettings()->watchStreakHighlightColor,
+                             ColorType::WatchStreak);
+                }
                 else if (rowIndex == HighlightRowIndexes::RedeemedRow)
                 {
                     setColor(getSettings()->redeemedHighlightColor,
@@ -513,6 +592,11 @@ void HighlightModel::customRowSetData(const std::vector<QStandardItem *> &row,
                 {
                     setColor(getSettings()->automodHighlightColor,
                              ColorType::AutomodHighlight);
+                }
+                else if (rowIndex == HighlightRowIndexes::AnnouncementRow)
+                {
+                    setColor(getSettings()->announcementHighlightColor,
+                             ColorType::AnnouncementHighlight);
                 }
             }
         }

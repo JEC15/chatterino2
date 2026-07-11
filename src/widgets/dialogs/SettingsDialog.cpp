@@ -1,7 +1,12 @@
+// SPDX-FileCopyrightText: 2017 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "widgets/dialogs/SettingsDialog.hpp"
 
 #include "Application.hpp"
 #include "common/Args.hpp"
+#include "common/QLogging.hpp"
 #include "controllers/commands/CommandController.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
 #include "controllers/inputreplacement/InputReplacementController.hpp"
@@ -25,7 +30,6 @@
 #include "widgets/settingspages/PluginsPage.hpp"
 
 #include <QDialogButtonBox>
-#include <QFile>
 #include <QLineEdit>
 
 namespace chatterino {
@@ -37,6 +41,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
               BaseWindow::Flags::Dialog,
               BaseWindow::DisableLayoutSave,
               BaseWindow::BoundsCheckOnShow,
+              BaseWindow::UseSettingsStylesheet,
           },
           parent)
 {
@@ -47,15 +52,9 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                          ~Qt::WindowContextHelpButtonHint);
 
     this->resize(915, 600);
-    this->themeChangedEvent();
-    QFile styleFile(":/qss/settings.qss");
-    styleFile.open(QFile::ReadOnly);
-    QString stylesheet = QString::fromUtf8(styleFile.readAll());
-    this->setStyleSheet(stylesheet);
 
     this->initUi();
     this->addTabs();
-    this->overrideBackgroundColor_ = QColor("#111111");
 
     this->addShortcuts();
     this->signalHolder_.managedConnect(getApp()->getHotkeys()->onItemsUpdated,
@@ -241,7 +240,7 @@ void SettingsDialog::addTabs()
     this->addTab([]{return new NicknamesPage;},        "Nicknames",      ":/settings/accounts.svg");
     this->ui_.tabContainer->addSpacing(16);
     this->addTab([]{return new CommandPage;},          "Commands",       ":/settings/commands.svg");
-    this->addTab([]{return new HighlightingPage;},     "Highlights",     ":/settings/notifications.svg");
+    this->addTab([]{return new HighlightingPage;},     "Highlights",     ":/settings/notifications.svg", SettingsTabId::Highlights);
     this->addTab([]{return new IgnoresPage;},          "Ignores",        ":/settings/ignore.svg");
     this->addTab([]{return new InputReplacementPage;}, "Input Replace",  ":/settings/commands.svg");
     this->addTab([]{return new FiltersPage;},          "Filters",        ":/settings/filters.svg");
@@ -355,6 +354,10 @@ void SettingsDialog::showDialog(QWidget *parent,
             instance->selectTab(SettingsTabId::Accounts);
             break;
 
+        case SettingsDialogPreference::Highlights:
+            instance->selectTab(SettingsTabId::Highlights);
+            break;
+
         case SettingsDialogPreference::ModerationActions:
             if (auto *tab = instance->tab(SettingsTabId::Moderation))
             {
@@ -414,15 +417,6 @@ void SettingsDialog::scaleChangedEvent(float newScale)
     {
         this->ui_.tabContainerContainer->setFixedWidth(150);
     }
-}
-
-void SettingsDialog::themeChangedEvent()
-{
-    BaseWindow::themeChangedEvent();
-
-    QPalette palette;
-    palette.setColor(QPalette::Window, QColor("#111"));
-    this->setPalette(palette);
 }
 
 void SettingsDialog::showEvent(QShowEvent *e)

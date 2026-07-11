@@ -1,9 +1,12 @@
+// SPDX-FileCopyrightText: 2016 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "widgets/Window.hpp"
 
 #include "Application.hpp"
 #include "common/Args.hpp"
 #include "common/Common.hpp"
-#include "common/Credentials.hpp"
 #include "common/Modes.hpp"
 #include "common/QLogging.hpp"
 #include "common/Version.hpp"
@@ -67,10 +70,10 @@ Window::Window(WindowType type, QWidget *parent)
     this->addMenuBar();
 #endif
 
-    this->bSignals_.emplace_back(
-        getApp()->getAccounts()->twitch.currentUserChanged.connect([this] {
+    this->signalHolder_.managedConnect(
+        getApp()->getAccounts()->twitch.currentUserChanged, [this] {
             this->onAccountSelected();
-        }));
+        });
     this->onAccountSelected();
 
     if (type == WindowType::Main)
@@ -153,10 +156,19 @@ bool Window::event(QEvent *event)
 
 void Window::closeEvent(QCloseEvent *)
 {
+    if (isAppAboutToQuit())
+    {
+        qCWarning(chatterinoWidget)
+            << "Window closeEvent ran when Application is already dead";
+        return;
+    }
+
+    auto *app = getApp();
+
     if (this->type_ == WindowType::Main)
     {
-        getApp()->getWindows()->save();
-        getApp()->getWindows()->closeAll();
+        app->getWindows()->save();
+        app->getWindows()->closeAll();
     }
     else
     {
@@ -167,7 +179,7 @@ void Window::closeEvent(QCloseEvent *)
     // Ensure selectedWindow_ is never an invalid pointer.
     // WindowManager will return the main window if no window is pointed to by
     // `selectedWindow_`.
-    getApp()->getWindows()->selectedWindow_ = nullptr;
+    app->getWindows()->selectedWindow_ = nullptr;
 
     this->closed.invoke();
 
@@ -212,7 +224,7 @@ void Window::addCustomTitlebarButtons()
     // updates
     auto *update = this->addTitleBarButton<PixmapButton>([] {});
 
-    initUpdateButton(*update, this->signalHolder_);
+    initUpdateButton(*update, [] {}, this->signalHolder_);
 
     // account
     this->userLabel_ = this->addTitleBarLabel([this] {
@@ -220,7 +232,7 @@ void Window::addCustomTitlebarButtons()
             this->userLabel_->mapToGlobal(
                 this->userLabel_->rect().bottomLeft()));
     });
-    this->userLabel_->setMinimumWidth(20 * scale());
+    this->userLabel_->setMinimumWidth(20 * this->scale());
 
     // streamer mode
     this->streamerModeTitlebarIcon_ =

@@ -1,7 +1,12 @@
+// SPDX-FileCopyrightText: 2024 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "util/QMagicEnum.hpp"
 
 #include "common/FlagsEnum.hpp"
 #include "common/Literals.hpp"
+#include "common/ThumbnailPreviewMode.hpp"
 #include "Test.hpp"
 #include "util/QMagicEnumTagged.hpp"
 
@@ -202,7 +207,7 @@ TEST(QMagicEnum, open)
     static_assert(checkConst(OpenOne, u"OpenOne"));
     static_assert(checkConst(OpenTwo, u"OpenTwo"));
     static_assert(checkConst(OpenThree, u"OpenThree"));
-    static_assert(eq(enumName(static_cast<MyOpen>(16)), u""));
+    static_assert(eq(enumName(static_cast<MyOpen>(10)), u""));
     static_assert(checkValues<MyOpen>({u"OpenOne", u"OpenTwo", u"OpenThree"}));
 }
 
@@ -257,4 +262,8 @@ TEST(QMagicEnumTagged, enumDisplayNameString)
 
     auto secondWithSpec = enumName<MyCustom::Second>();
     ASSERT_EQ(secondWithSpec, u"mysecond.*");
+
+    ASSERT_EQ(
+        qmagicenum::enumDisplayNameString<ThumbnailPreviewMode::DontShow>(),
+        u"Don't show");
 }

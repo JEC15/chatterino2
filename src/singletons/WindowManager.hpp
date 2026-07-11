@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2017 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include "common/FlagsEnum.hpp"
@@ -5,11 +9,13 @@
 #include "widgets/splits/SplitContainer.hpp"
 
 #include <pajlada/settings/settinglistener.hpp>
+#include <QObject>
 #include <QPoint>
 #include <QTimer>
 
 #include <memory>
 #include <set>
+#include <span>
 
 namespace chatterino {
 
@@ -36,8 +42,10 @@ enum class WindowType;
 enum class SettingsDialogPreference;
 class FramelessEmbedWindow;
 
-class WindowManager final
+class WindowManager final : public QObject
 {
+    Q_OBJECT
+
     Theme &themes;
     const Args &appArgs;
 
@@ -57,7 +65,6 @@ public:
                           QJsonObject &obj);
     static void encodeChannel(IndirectChannel channel, QJsonObject &obj);
     static void encodeFilters(Split *split, QJsonArray &arr);
-    static IndirectChannel decodeChannel(const SplitDescriptor &descriptor);
 
     void showSettingsDialog(
         QWidget *parent,
@@ -135,6 +142,8 @@ public:
     void toggleAllOverlayInertia();
 
     std::set<QString> getVisibleChannelNames() const;
+
+    std::span<Window *const> windows() const;
 
     /// Signals
     pajlada::Signals::NoArgSignal gifRepaintRequested;

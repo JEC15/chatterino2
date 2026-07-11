@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2019 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "widgets/buttons/Button.hpp"
 
 #include "singletons/Theme.hpp"
@@ -5,6 +9,7 @@
 
 #include <QApplication>
 #include <QDebug>
+#include <QMimeData>
 #include <QPainter>
 #include <QScreen>
 
@@ -13,7 +18,7 @@ namespace chatterino {
 Button::Button(BaseWidget *parent)
     : BaseWidget(parent)
 {
-    connect(&effectTimer_, &QTimer::timeout, this,
+    connect(&this->effectTimer_, &QTimer::timeout, this,
             &Button::onMouseEffectTimeout);
 
     this->effectTimer_.setInterval(20);
@@ -39,9 +44,9 @@ bool Button::mouseOver() const noexcept
     return this->mouseOver_;
 }
 
-bool Button::mouseDown() const noexcept
+bool Button::leftMouseButtonDown() const noexcept
 {
-    return this->mouseDown_;
+    return this->leftMouseButtonDown_;
 }
 
 bool Button::menuVisible() const noexcept
@@ -97,6 +102,32 @@ void Button::setMenu(std::unique_ptr<QMenu> menu)
         }));
 }
 
+void Button::enableDrops(const std::vector<QString> &acceptedDropMimes_)
+{
+    this->setAcceptDrops(true);
+    this->acceptedDropMimes = acceptedDropMimes_;
+}
+
+void Button::dragEnterEvent(QDragEnterEvent *event)
+{
+    auto anyMatches = std::ranges::any_of(
+        this->acceptedDropMimes, [event](const QString &acceptedMime) {
+            return event->mimeData()->hasFormat(acceptedMime);
+        });
+
+    if (!anyMatches)
+    {
+        return;
+    }
+
+    event->acceptProposedAction();
+
+    this->addClickEffect(QPoint{
+        this->width() / 2,
+        this->height() / 2,
+    });
+}
+
 void Button::paintEvent(QPaintEvent * /*event*/)
 {
     QPainter painter(this);
@@ -138,16 +169,13 @@ void Button::setOpaqueContent(bool opaqueContent)
     this->opaqueContent_ = opaqueContent;
 }
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 void Button::enterEvent(QEnterEvent * /*event*/)
-#else
-void Button::enterEvent(QEvent * /*event*/)
-#endif
 {
     if (!this->mouseOver_)
     {
         this->mouseOver_ = true;
         this->update();
+        this->mouseOverUpdated();
     }
 }
 
@@ -157,6 +185,7 @@ void Button::leaveEvent(QEvent * /*event*/)
     {
         this->mouseOver_ = false;
         this->update();
+        this->mouseOverUpdated();
     }
 }
 
@@ -167,49 +196,83 @@ void Button::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    if (event->button() != Qt::LeftButton)
+    switch (event->button())
     {
-        return;
-    }
+        case Qt::MouseButton::LeftButton: {
+            this->leftMouseButtonDown_ = true;
 
-    this->addClickEffect(event->pos());
+            this->addClickEffect(event->pos());
 
-    this->mouseDown_ = true;
+            this->leftMousePress();
 
-    this->leftMousePress();
+            if (this->menu_ && !this->menuVisible_)
+            {
+                QTimer::singleShot(80, this, [this] {
+                    this->showMenu();
+                });
+                this->leftMouseButtonDown_ = false;
+                this->mouseOver_ = false;
+            }
+        }
+        break;
+        case Qt::MouseButton::RightButton: {
+            this->rightMouseButtonDown_ = true;
+        }
+        break;
+        case Qt::MouseButton::MiddleButton: {
+            this->middleMouseButtonDown_ = true;
+        }
+        break;
 
-    if (this->menu_ && !this->menuVisible_)
-    {
-        QTimer::singleShot(80, this, [this] {
-            this->showMenu();
-        });
-        this->mouseDown_ = false;
-        this->mouseOver_ = false;
+        default:
+            // Unsupported button
+            return;
     }
 }
 
 void Button::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (!this->enabled_ || !this->mouseDown_)
+    // Reset the "mouse button down" state of the released button and store
+    // whether the button was in the down state when this event fired
+    bool hadCorrectButtonPressed = false;
+    switch (event->button())
+    {
+        case Qt::MouseButton::LeftButton: {
+            hadCorrectButtonPressed = this->leftMouseButtonDown_;
+            this->leftMouseButtonDown_ = false;
+        }
+        break;
+        case Qt::MouseButton::RightButton: {
+            hadCorrectButtonPressed = this->rightMouseButtonDown_;
+            this->rightMouseButtonDown_ = false;
+        }
+        break;
+        case Qt::MouseButton::MiddleButton: {
+            hadCorrectButtonPressed = this->middleMouseButtonDown_;
+            this->middleMouseButtonDown_ = false;
+        }
+        break;
+
+        default:
+            // Unsupported button
+            return;
+    }
+
+    if (!this->enabled_)
     {
         return;
     }
 
     bool isInside = this->rect().contains(event->pos());
 
-    if (event->button() == Qt::LeftButton)
+    if (isInside && hadCorrectButtonPressed)
     {
-        this->mouseDown_ = false;
-
-        if (isInside)
+        if (event->button() == Qt::LeftButton)
         {
-            leftClicked();
+            this->leftClicked();
         }
-    }
 
-    if (isInside)
-    {
-        clicked(event->button());
+        this->clicked(event->button());
     }
 }
 
@@ -232,7 +295,7 @@ void Button::onMouseEffectTimeout()
 {
     bool performUpdate = false;
 
-    if (mouseOver_)
+    if (this->mouseOver_)
     {
         if (this->hoverMultiplier_ != 1)
         {
@@ -258,7 +321,7 @@ void Button::onMouseEffectTimeout()
         for (auto it = this->clickEffects_.begin();
              it != this->clickEffects_.end();)
         {
-            it->progress += mouseDown_ ? 0.02 : 0.07;
+            it->progress += this->leftMouseButtonDown_ ? 0.02 : 0.07;
 
             if (it->progress >= 1.0)
             {
@@ -273,7 +336,7 @@ void Button::onMouseEffectTimeout()
 
     if (performUpdate)
     {
-        update();
+        this->update();
     }
 }
 
@@ -374,7 +437,7 @@ void Button::fancyPaint(QPainter &painter)
 
     if (this->hoverMultiplier_ > 0)
     {
-        QRadialGradient gradient(QPointF(mousePos_),
+        QRadialGradient gradient(QPointF(this->mousePos_),
                                  static_cast<qreal>(this->width()) / 2.0);
 
         gradient.setColorAt(0, QColor(c.red(), c.green(), c.blue(),
@@ -391,8 +454,8 @@ void Button::fancyPaint(QPainter &painter)
         painter.setBrush(QColor(c.red(), c.green(), c.blue(),
                                 int((1 - effect.progress) * 95)));
         painter.drawEllipse(QPointF(effect.position),
-                            effect.progress * qreal(width()) * 2,
-                            effect.progress * qreal(width()) * 2);
+                            effect.progress * qreal(this->width()) * 2,
+                            effect.progress * qreal(this->width()) * 2);
     }
 }
 

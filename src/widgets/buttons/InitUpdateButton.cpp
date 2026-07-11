@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2018 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "widgets/buttons/InitUpdateButton.hpp"
 
 #include "Application.hpp"
@@ -7,12 +11,13 @@
 namespace chatterino {
 
 void initUpdateButton(PixmapButton &button,
+                      const std::function<void()> &relayout,
                       pajlada::Signals::SignalHolder &signalHolder)
 {
     button.hide();
 
     // show update prompt when clicking the button
-    QObject::connect(&button, &Button::leftClicked, [&button] {
+    QObject::connect(&button, &Button::leftClicked, [&button, relayout] {
         auto *dialog = new UpdateDialog();
 
         auto globalPoint = button.mapToGlobal(
@@ -32,18 +37,9 @@ void initUpdateButton(PixmapButton &button,
         // be destroyed before the button is destroyed, since it is destroyed on focus loss
         //
         // The button is either attached to a Notebook, or a Window frame
-        std::ignore = dialog->buttonClicked.connect([&button](auto buttonType) {
-            switch (buttonType)
-            {
-                case UpdateDialog::Dismiss: {
-                    button.hide();
-                }
-                break;
-                case UpdateDialog::Install: {
-                    getApp()->getUpdates().installUpdates();
-                }
-                break;
-            }
+        std::ignore = dialog->dismissed.connect([&button, relayout]() {
+            button.hide();
+            relayout();
         });
 
         //        handle.reset(dialog);
@@ -51,13 +47,15 @@ void initUpdateButton(PixmapButton &button,
     });
 
     // update image when state changes
-    auto updateChange = [&button](auto) {
+    auto updateChange = [&button, relayout](auto) {
         button.setVisible(getApp()->getUpdates().shouldShowUpdateButton());
 
         const auto *imageUrl = getApp()->getUpdates().isError()
                                    ? ":/buttons/updateError.png"
                                    : ":/buttons/update.png";
         button.setPixmap(QPixmap(imageUrl));
+
+        relayout();
     };
 
     updateChange(getApp()->getUpdates().getStatus());

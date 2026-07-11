@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2019 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "common/Args.hpp"
 
 #include "common/QLogging.hpp"
@@ -120,7 +124,7 @@ Args::Args(const QApplication &app, const Paths &paths)
     QCommandLineOption loginOption(
         "login",
         "Starts Chatterino logged in as the account matching the supplied "
-        "username. If the supplied username does not match any account "
+        "username. If the supplied username does not match any account, "
         "Chatterino starts logged in as anonymous.",
         "username");
 
@@ -140,6 +144,13 @@ Args::Args(const QApplication &app, const Paths &paths)
         "specified, Twitch is assumed.",
         "t:channel");
 
+    QCommandLineOption useOldScalingOption(
+        "use-old-scaling",
+        "Starts Chatterino with the old scaling option applied. This is not a "
+        "setting that will stick around. If you have issues where you feel "
+        "like you have to use this, please reach out to our issue tracker at "
+        "https://github.com/Chatterino/chatterino2/issues");
+
 #ifndef NDEBUG
     QCommandLineOption useLocalEventsubOption(
         "use-local-eventsub",
@@ -158,6 +169,7 @@ Args::Args(const QApplication &app, const Paths &paths)
         loginOption,
         channelLayout,
         activateOption,
+        useOldScalingOption,
 #ifndef NDEBUG
         useLocalEventsubOption,
 #endif
@@ -223,6 +235,11 @@ Args::Args(const QApplication &app, const Paths &paths)
     {
         this->activateChannel =
             parseActivateOption(parser.value(activateOption));
+    }
+
+    if (parser.isSet(useOldScalingOption))
+    {
+        this->useOldScaling = true;
     }
 
 #ifndef NDEBUG
@@ -306,7 +323,10 @@ void Args::applyCustomChannelLayout(const QString &argValue, const Paths &paths)
 
             // Set first tab as selected
             tab.selected_ = window.tabs_.empty();
-            tab.rootNode_ = SplitNodeDescriptor{{"twitch", channelName}};
+            tab.rootNode_ = SplitNodeDescriptor{{
+                .type_ = "twitch",
+                .channelName_ = channelName,
+            }};
 
             window.tabs_.emplace_back(std::move(tab));
         }

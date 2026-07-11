@@ -1,14 +1,21 @@
+// SPDX-FileCopyrightText: 2023 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #ifdef CHATTERINO_HAVE_PLUGINS
 #    include "widgets/settingspages/PluginsPage.hpp"
 
 #    include "Application.hpp"
 #    include "common/Args.hpp"
+#    include "controllers/accounts/AccountController.hpp"
 #    include "controllers/plugins/PluginController.hpp"
 #    include "singletons/Paths.hpp"
 #    include "singletons/Settings.hpp"
 #    include "util/Helpers.hpp"
 #    include "util/LayoutCreator.hpp"
 #    include "util/RemoveScrollAreaBackground.hpp"
+#    include "widgets/PluginRepl.hpp"
+#    include "widgets/settingspages/SettingWidget.hpp"
 
 #    include <QCheckBox>
 #    include <QFormLayout>
@@ -78,9 +85,28 @@ PluginsPage::PluginsPage()
                                    "enable and disable them.");
             groupLayout->addRow(disabledLabel);
         }
+
+        if (getSettings()->pluginRepl.enabled)
+        {
+            groupLayout->addRow(SettingWidget::fontButton(
+                "REPL font", getSettings()->pluginRepl.fontFamily,
+                &PluginRepl::currentFont, [](const QFont &font) {
+                    getSettings()->pluginRepl.fontFamily = font.family();
+                    getSettings()->pluginRepl.fontSize = font.pointSize();
+                    getSettings()->pluginRepl.fontStyle = font.styleName();
+                }));
+        }
     }
 
-    this->rebuildContent();
+    this->managedConnections_.managedConnect(
+        getApp()->getPlugins()->onPluginsUpdated, [this] {
+            this->rebuildContent();
+        });
+    getSettings()->enabledPlugins.connect(
+        [this] {
+            this->rebuildContent();
+        },
+        this->managedConnections_);
 }
 
 void PluginsPage::rebuildContent()
@@ -202,12 +228,10 @@ void PluginsPage::rebuildContent()
             auto *toggleButton = new QPushButton(toggleTxt, this->dataFrame_);
             QObject::connect(
                 toggleButton, &QPushButton::pressed, [name = id, this]() {
-                    std::vector<QString> val =
-                        getSettings()->enabledPlugins.getValue();
+                    QStringList val = getSettings()->enabledPlugins;
                     if (PluginController::isPluginEnabled(name))
                     {
-                        val.erase(std::remove(val.begin(), val.end(), name),
-                                  val.end());
+                        val.removeAll(name);
                     }
                     else
                     {
@@ -215,21 +239,28 @@ void PluginsPage::rebuildContent()
                     }
                     getSettings()->enabledPlugins.setValue(val);
                     getApp()->getPlugins()->reload(name);
-                    this->rebuildContent();
                 });
             pluginEntry->addRow(toggleButton);
         }
 
         auto *reloadButton = new QPushButton("Reload", this->dataFrame_);
-        QObject::connect(reloadButton, &QPushButton::pressed,
-                         [name = id, this]() {
-                             getApp()->getPlugins()->reload(name);
-                             this->rebuildContent();
-                         });
+        QObject::connect(reloadButton, &QPushButton::pressed, [name = id]() {
+            getApp()->getPlugins()->reload(name);
+        });
         pluginEntry->addRow(reloadButton);
         if (getApp()->getArgs().safeMode)
         {
             reloadButton->setEnabled(false);
+        }
+
+        if (getSettings()->pluginRepl.enabled)
+        {
+            auto *replButton = new QPushButton("Open REPL", this->dataFrame_);
+            QObject::connect(replButton, &QPushButton::clicked, [id]() {
+                auto *repl = new PluginRepl(id);
+                repl->show();
+            });
+            pluginEntry->addRow(replButton);
         }
     }
 }

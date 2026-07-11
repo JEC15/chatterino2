@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2017 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "widgets/splits/SplitInput.hpp"
 
 #include "Application.hpp"
@@ -6,6 +10,7 @@
 #include "controllers/commands/CommandController.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
 #include "controllers/inputreplacement/InputReplacementController.hpp"
+#include "controllers/spellcheck/SpellChecker.hpp"
 #include "messages/Link.hpp"
 #include "messages/Message.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
@@ -16,25 +21,81 @@
 #include "singletons/Theme.hpp"
 #include "util/Helpers.hpp"
 #include "util/LayoutCreator.hpp"
+#include "util/PostToThread.hpp"
 #include "widgets/buttons/LabelButton.hpp"
 #include "widgets/buttons/SvgButton.hpp"
 #include "widgets/dialogs/EmotePopup.hpp"
 #include "widgets/helper/ChannelView.hpp"
+#include "widgets/helper/CmdDeleteKeyFilter.hpp"
 #include "widgets/helper/MessageView.hpp"
 #include "widgets/helper/ResizingTextEdit.hpp"
 #include "widgets/Notebook.hpp"
 #include "widgets/Scrollbar.hpp"
 #include "widgets/splits/InputCompletionPopup.hpp"
+#include "widgets/splits/InputHighlighter.hpp"
 #include "widgets/splits/Split.hpp"
 #include "widgets/splits/SplitContainer.hpp"
 
 #include <QCompleter>
 #include <QPainter>
 #include <QSignalBlocker>
+#include <qwindow.h>
 
+#include <algorithm>
 #include <functional>
+#include <ranges>
+#include <utility>
+
+using namespace Qt::Literals;
 
 namespace chatterino {
+
+namespace {
+
+// Current function: https://www.desmos.com/calculator/vdyamchjwh
+qreal highlightEasingFunction(qreal progress)
+{
+    if (progress <= 0.1)
+    {
+        return 1.0 - pow(10.0 * progress, 3.0);
+    }
+    return 1.0 + pow((20.0 / 9.0) * (0.5 * progress - 0.5), 3.0);
+}
+
+class BackwardsSearchLineEdit : public QLineEdit
+{
+    Q_OBJECT
+
+public:
+    BackwardsSearchLineEdit(QWidget *parent = nullptr)
+        : QLineEdit(parent)
+    {
+    }
+
+Q_SIGNALS:
+    void onFocusOut();
+
+protected:
+    void focusOutEvent(QFocusEvent * /* event */) override
+    {
+        this->onFocusOut();
+    }
+
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        auto key = event->key();
+        bool isEndKey = key == Qt::Key_Escape || key == Qt::Key_Enter ||
+                        key == Qt::Key_Tab || key == Qt::Key_Backtab;
+        if (!event->modifiers().testFlag(Qt::ControlModifier) && isEndKey)
+        {
+            this->clearFocus();
+            return;
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+};
+
+}  // namespace
 
 SplitInput::SplitInput(Split *_chatWidget, bool enableInlineReplying)
     : SplitInput(_chatWidget, _chatWidget, _chatWidget->view_,
@@ -48,6 +109,7 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
     , split_(_chatWidget)
     , channelView_(_channelView)
     , enableInlineReplying_(enableInlineReplying)
+    , backgroundColorAnimation(this, "backgroundColor"_ba)
 {
     this->installEventFilter(this);
     this->initLayout();
@@ -56,14 +118,26 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
         new QCompleter(this->split_->getChannel()->completionModel);
     this->ui_.textEdit->setCompleter(completer);
 
+    // NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)
+    auto *spellChecker = getApp()->getSpellChecker();
+    this->inputHighlighter = new InputHighlighter(*spellChecker, this);
+    this->inputHighlighter->setChannel(this->split_->getChannel());
+
     this->signalHolder_.managedConnect(this->split_->channelChanged, [this] {
         auto channel = this->split_->getChannel();
         auto *completer = new QCompleter(channel->completionModel);
         this->ui_.textEdit->setCompleter(completer);
+        this->inputHighlighter->setChannel(this->split_->getChannel());
     });
 
+    getSettings()->enableSpellChecking.connect(
+        [this] {
+            this->checkSpellingChanged();
+        },
+        this->signalHolder_);
+
     // misc
-    this->installKeyPressedEvent();
+    this->installTextEditEvents();
     this->addShortcuts();
     // The textEdit's signal will be destroyed before this SplitInput is
     // destroyed, so we can safely ignore this signal's connection.
@@ -76,6 +150,11 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
                                            this->clearShortcuts();
                                            this->addShortcuts();
                                        });
+
+    QEasingCurve curve;
+    curve.setCustomType(highlightEasingFunction);
+    this->backgroundColorAnimation.setDuration(500);
+    this->backgroundColorAnimation.setEasingCurve(curve);
 }
 
 void SplitInput::initLayout()
@@ -88,6 +167,47 @@ void SplitInput::initLayout()
             &this->ui_.vbox);
     layout->setSpacing(0);
     this->applyOuterMargin();
+
+    // backwards ui
+    {
+        auto wrap =
+            layout.emplace<QWidget>().assign(&this->ui_.historySearchWrap);
+        wrap->setVisible(false);
+        wrap->setAutoFillBackground(true);
+        auto palette = wrap->palette();
+        palette.setColor(QPalette::Base, Qt::transparent);
+        palette.setColor(QPalette::Window, getTheme()->splits.input.background);
+        wrap->setPalette(palette);
+
+        auto backLayout = wrap.setLayoutType<QHBoxLayout>().withoutMargin();
+
+        backLayout->addSpacing(5);
+        auto input = backLayout.emplace<BackwardsSearchLineEdit>().assign(
+            &this->ui_.historySearchInput);
+        input->setFrame(false);
+        input->setPlaceholderText("Search input history...");
+        input->setFocusPolicy(Qt::ClickFocus);
+        QObject::connect(input.getElement(), &QLineEdit::textChanged, this,
+                         [this](const QString &text) {
+                             if (this->inHistorySearch)
+                             {
+                                 this->historySearchQuery = text;
+                                 this->refreshHistorySearch(
+                                     this->lastHistorySearchBackwards,
+                                     this->lastHistorySearchLoop);
+                             }
+                         });
+        QObject::connect(input.getElement(),
+                         &BackwardsSearchLineEdit::onFocusOut, this,
+                         &SplitInput::stopHistorySearchIfNecessary);
+        backLayout->setStretch(0, 1);
+        backLayout->addSpacing(5);
+
+        auto label =
+            backLayout.emplace<QLabel>().assign(&this->ui_.historySearchLabel);
+        label->setFrameStyle(QFrame::NoFrame);
+        backLayout->addSpacing(5);
+    }
 
     // reply label stuff
     auto replyWrapper =
@@ -102,11 +222,11 @@ void SplitInput::initLayout()
     auto replyHbox =
         replyVbox.emplace<QHBoxLayout>().assign(&this->ui_.replyHbox);
 
-    auto messageVbox = layoutCreator.setLayoutType<QVBoxLayout>();
+    auto *messageVbox = new QVBoxLayout;
     this->ui_.replyMessage = new MessageView();
     messageVbox->addWidget(this->ui_.replyMessage, 0, Qt::AlignLeft);
     messageVbox->setContentsMargins(10, 0, 0, 0);
-    replyVbox->addLayout(messageVbox->layout(), 0);
+    replyVbox->addLayout(messageVbox, 0);
 
     auto replyLabel = replyHbox.emplace<QLabel>().assign(&this->ui_.replyLabel);
     replyLabel->setAlignment(Qt::AlignLeft);
@@ -141,6 +261,10 @@ void SplitInput::initLayout()
         hboxLayout.emplace<ResizingTextEdit>().assign(&this->ui_.textEdit);
     connect(textEdit.getElement(), &ResizingTextEdit::textChanged, this,
             &SplitInput::editTextChanged);
+    textEdit->setFrameStyle(QFrame::NoFrame);
+
+    auto *shortcutFilter = new CmdDeleteKeyFilter(this);
+    textEdit->installEventFilter(shortcutFilter);
 
     hboxLayout.emplace<LabelButton>("SEND").assign(&this->ui_.sendButton);
     this->ui_.sendButton->hide();
@@ -167,18 +291,24 @@ void SplitInput::initLayout()
     auto box = hboxLayout.emplace<QVBoxLayout>().withoutMargin();
     box->setSpacing(0);
     {
-        auto textEditLength =
-            box.emplace<QLabel>().assign(&this->ui_.textEditLength);
-        textEditLength->setAlignment(Qt::AlignRight);
+        auto hbox = box.emplace<QHBoxLayout>().withoutMargin();
+        this->ui_.textEditLength = new QLabel();
+        // Right-align the labels contents
+        this->ui_.textEditLength->setAlignment(Qt::AlignRight);
+        hbox->addWidget(this->ui_.textEditLength);
 
-        box->addStretch(1);
-        box.emplace<SvgButton>(
-               SvgButton::Src{
-                   .dark = ":/buttons/emote.svg",
-                   .light = ":/buttons/emoteDark.svg",
-               },
-               nullptr, QSize{6, 3})
-            .assign(&this->ui_.emoteButton);
+        this->ui_.sendWaitStatus = new QLabel();
+        this->ui_.sendWaitStatus->setAlignment(Qt::AlignRight);
+        this->ui_.sendWaitStatus->setHidden(true);
+        hbox->addWidget(this->ui_.sendWaitStatus);
+
+        this->ui_.emoteButton = new SvgButton(
+            {
+                .dark = ":/buttons/emote.svg",
+                .light = ":/buttons/emoteDark.svg",
+            },
+            nullptr, QSize{6, 3});
+        box->addWidget(this->ui_.emoteButton, 0, Qt::AlignRight);
     }
 
     // ---- misc
@@ -191,13 +321,10 @@ void SplitInput::initLayout()
     QObject::connect(this->ui_.textEdit, &QTextEdit::textChanged, this,
                      &SplitInput::onTextChanged);
 
-    this->managedConnections_.managedConnect(
-        app->getFonts()->fontChanged, [=, this]() {
-            this->ui_.textEdit->setFont(
-                app->getFonts()->getFont(FontStyle::ChatMedium, this->scale()));
-            this->ui_.replyLabel->setFont(app->getFonts()->getFont(
-                FontStyle::ChatMediumBold, this->scale()));
-        });
+    this->managedConnections_.managedConnect(app->getFonts()->fontChanged,
+                                             [this] {
+                                                 this->updateFonts();
+                                             });
 
     // open emote popup
     QObject::connect(this->ui_.emoteButton, &Button::leftClicked, [this] {
@@ -225,11 +352,30 @@ void SplitInput::initLayout()
             this->editTextChanged();
         },
         this->managedConnections_);
+
+    // sendWaitStatus visibility
+    getSettings()->showSendWaitTimer.connect(
+        [this](bool value, const auto &) {
+            if (!this->ui_.sendWaitStatus->text().isEmpty())
+            {
+                this->ui_.sendWaitStatus->setHidden(!value);
+            }
+        },
+        this->managedConnections_);
+}
+
+void SplitInput::triggerSelfMessageReceived()
+{
+    if (this->backgroundColorAnimation.state() != QPropertyAnimation::Stopped)
+    {
+        this->backgroundColorAnimation.stop();
+    }
+    this->backgroundColorAnimation.setDirection(QPropertyAnimation::Forward);
+    this->backgroundColorAnimation.start();
 }
 
 void SplitInput::scaleChangedEvent(float scale)
 {
-    auto *app = getApp();
     // update the icon size of the buttons
     this->updateEmoteButton();
     this->updateCancelReplyButton();
@@ -243,36 +389,38 @@ void SplitInput::scaleChangedEvent(float scale)
             this->ui_.vbox->setSpacing(this->marginForTheme());
         }
     }
-    this->ui_.textEdit->setFont(
-        app->getFonts()->getFont(FontStyle::ChatMedium, scale));
-
-    QPalette placeholderPalette;
-    placeholderPalette.setColor(
-        QPalette::PlaceholderText,
-        this->theme->messages.textColors.chatPlaceholder);
-
-    this->ui_.textEdit->setStyleSheet(this->theme->splits.input.styleSheet);
-    this->ui_.textEdit->setPalette(placeholderPalette);
-    this->ui_.textEditLength->setFont(
-        app->getFonts()->getFont(FontStyle::ChatMedium, scale));
-    this->ui_.replyLabel->setFont(
-        app->getFonts()->getFont(FontStyle::ChatMediumBold, scale));
+    this->updateFonts();
 }
 
 void SplitInput::themeChangedEvent()
 {
-    QPalette palette;
-    QPalette placeholderPalette;
+    {
+        QPalette palette;
+        palette.setColor(QPalette::WindowText, this->theme->splits.input.text);
+        this->ui_.textEditLength->setPalette(palette);
+        this->ui_.sendWaitStatus->setPalette(palette);
+    }
 
-    palette.setColor(QPalette::WindowText, this->theme->splits.input.text);
-    placeholderPalette.setColor(
-        QPalette::PlaceholderText,
-        this->theme->messages.textColors.chatPlaceholder);
+    {
+        QPalette palette = this->ui_.historySearchWrap->palette();
+        palette.setColor(QPalette::Window, getTheme()->splits.input.background);
+        if (!this->historySearchFailed)
+        {
+            palette.setColor(QPalette::Text, getTheme()->splits.input.text);
+            palette.setColor(QPalette::WindowText,
+                             getTheme()->splits.input.text);
+        }
+        this->ui_.historySearchWrap->setPalette(palette);
+    }
 
-    this->ui_.textEditLength->setPalette(palette);
-
-    this->ui_.textEdit->setStyleSheet(this->theme->splits.input.styleSheet);
-    this->ui_.textEdit->setPalette(placeholderPalette);
+    // Theme changed, reset current background color
+    this->setBackgroundColor(this->theme->splits.input.background);
+    this->backgroundColorAnimation.setStartValue(
+        this->theme->splits.input.backgroundPulse);
+    this->backgroundColorAnimation.setEndValue(
+        this->theme->splits.input.background);
+    this->backgroundColorAnimation.stop();
+    this->updateTextEditPalette();
 
     if (this->theme->isLightTheme())
     {
@@ -353,7 +501,7 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
     if (!c->isTwitchChannel() || this->replyTarget_ == nullptr)
     {
         // standard message send behavior
-        QString message = ui_.textEdit->toPlainText();
+        QString message = this->ui_.textEdit->toPlainText();
 
         message = message.replace('\n', ' ');
         QString sendMessage =
@@ -436,6 +584,8 @@ void SplitInput::addShortcuts()
     HotkeyController::HotkeyMap actions{
         {"cursorToStart",
          [this](const std::vector<QString> &arguments) -> QString {
+             this->stopHistorySearchIfNecessary();
+
              if (arguments.size() != 1)
              {
                  qCWarning(chatterinoHotkeys)
@@ -471,6 +621,8 @@ void SplitInput::addShortcuts()
          }},
         {"cursorToEnd",
          [this](const std::vector<QString> &arguments) -> QString {
+             this->stopHistorySearchIfNecessary();
+
              if (arguments.size() != 1)
              {
                  qCWarning(chatterinoHotkeys)
@@ -513,11 +665,14 @@ void SplitInput::addShortcuts()
          }},
         {"sendMessage",
          [this](const std::vector<QString> &arguments) -> QString {
+             this->stopHistorySearchIfNecessary();
              return this->handleSendMessage(arguments);
          }},
         {"previousMessage",
          [this](const std::vector<QString> &arguments) -> QString {
              (void)arguments;
+
+             this->stopHistorySearchIfNecessary();
 
              if (this->prevMsg_.isEmpty() || this->prevIndex_ == 0)
              {
@@ -526,7 +681,7 @@ void SplitInput::addShortcuts()
 
              if (this->prevIndex_ == (this->prevMsg_.size()))
              {
-                 this->currMsg_ = ui_.textEdit->toPlainText();
+                 this->currMsg_ = this->ui_.textEdit->toPlainText();
              }
 
              this->prevIndex_--;
@@ -543,6 +698,7 @@ void SplitInput::addShortcuts()
         {"nextMessage",
          [this](const std::vector<QString> &arguments) -> QString {
              (void)arguments;
+             this->stopHistorySearchIfNecessary();
 
              // If user did not write anything before then just do nothing.
              if (this->prevMsg_.isEmpty())
@@ -550,7 +706,7 @@ void SplitInput::addShortcuts()
                  return "";
              }
              bool cursorToEnd = true;
-             QString message = ui_.textEdit->toPlainText();
+             QString message = this->ui_.textEdit->toPlainText();
 
              if (this->prevIndex_ != (this->prevMsg_.size() - 1) &&
                  this->prevIndex_ != this->prevMsg_.size())
@@ -594,6 +750,7 @@ void SplitInput::addShortcuts()
         {"undo",
          [this](const std::vector<QString> &arguments) -> QString {
              (void)arguments;
+             this->stopHistorySearchIfNecessary();
 
              this->ui_.textEdit->undo();
              return "";
@@ -601,6 +758,7 @@ void SplitInput::addShortcuts()
         {"redo",
          [this](const std::vector<QString> &arguments) -> QString {
              (void)arguments;
+             this->stopHistorySearchIfNecessary();
 
              this->ui_.textEdit->redo();
              return "";
@@ -648,6 +806,7 @@ void SplitInput::addShortcuts()
         {"paste",
          [this](const std::vector<QString> &arguments) -> QString {
              (void)arguments;
+             this->stopHistorySearchIfNecessary();
 
              this->ui_.textEdit->paste();
              return "";
@@ -674,6 +833,18 @@ void SplitInput::addShortcuts()
              cursor.select(QTextCursor::WordUnderCursor);
              this->ui_.textEdit->setTextCursor(cursor);
              return "";
+         }},
+        {"incremental-search-history",
+         [this](const auto &args) -> QString {
+             bool backwards = false;
+             bool loop = false;
+             if (args.size() >= 2)
+             {
+                 backwards = args[0] == u"backward"_s;
+                 loop = args[1] == u"loop"_s;
+             }
+             this->startHistorySearch(backwards, loop);
+             return {};
          }},
     };
 
@@ -702,7 +873,7 @@ bool SplitInput::eventFilter(QObject *obj, QEvent *event)
     return BaseWidget::eventFilter(obj, event);
 }
 
-void SplitInput::installKeyPressedEvent()
+void SplitInput::installTextEditEvents()
 {
     // We can safely ignore this signal's connection because SplitInput owns
     // the textEdit object, so it will always be deleted before SplitInput
@@ -734,10 +905,63 @@ void SplitInput::installKeyPressedEvent()
             }
         });
 
-#ifdef DEBUG
-    assert(this->keyPressedEventInstalled == false);
-    this->keyPressedEventInstalled = true;
+    std::ignore = this->ui_.textEdit->contextMenuRequested.connect(
+        [this](QMenu *menu, QPoint pos) {
+#ifdef CHATTERINO_WITH_SPELLCHECK
+            menu->addSeparator();
+            auto *spellcheckAction = new QAction("Check spelling", menu);
+            spellcheckAction->setCheckable(true);
+            spellcheckAction->setChecked(this->shouldCheckSpelling());
+            QObject::connect(spellcheckAction, &QAction::toggled, this,
+                             [this](bool enabled) {
+                                 this->checkSpellingOverride_ = enabled;
+                                 this->checkSpellingChanged();
+                             });
+            menu->addAction(spellcheckAction);
+
+            int nSuggestions = getSettings()->nSpellCheckingSuggestions;
+            if (nSuggestions < 0)
+            {
+                nSuggestions = std::numeric_limits<int>::max();
+            }
+
+            if (!this->inputHighlighter || nSuggestions == 0)
+            {
+                return;
+            }
+
+            auto cursorAtPos = this->ui_.textEdit->cursorForPosition(pos);
+            QString text = this->ui_.textEdit->toPlainText();
+            QStringView word =
+                this->inputHighlighter->getWordAt(text, cursorAtPos.position());
+            if (!word.isEmpty())
+            {
+                auto cursor = this->ui_.textEdit->textCursor();
+                // Select `word`. `word` is a view into `text`, so we can use
+                // the offsets of `word` from the start of `text`.
+                cursor.setPosition(
+                    static_cast<int>(word.begin() - text.begin()));
+                cursor.setPosition(static_cast<int>(word.end() - text.begin()),
+                                   QTextCursor::KeepAnchor);
+
+                auto suggestions =
+                    getApp()->getSpellChecker()->suggestions(word.toString());
+                for (const auto &sugg :
+                     suggestions | std::views::take(nSuggestions))
+                {
+                    auto qSugg = QString::fromStdString(sugg);
+                    menu->addAction(qSugg, [this, qSugg, cursor]() mutable {
+                        cursor.insertText(qSugg);
+                        this->ui_.textEdit->setTextCursor(cursor);
+                    });
+                }
+            }
+#else
+            (void)menu;
+            (void)pos;
+            (void)this;
 #endif
+        });
 }
 
 void SplitInput::mousePressEvent(QMouseEvent *event)
@@ -955,6 +1179,11 @@ bool SplitInput::isHidden() const
     return this->hidden;
 }
 
+bool SplitInput::isInHistorySearch() const
+{
+    return this->inHistorySearch;
+}
+
 void SplitInput::setInputText(const QString &newInputText)
 {
     this->ui_.textEdit->setPlainText(newInputText);
@@ -993,12 +1222,12 @@ void SplitInput::editTextChanged()
                                                true);
     }
 
+    QList<QTextEdit::ExtraSelection> selections;
     if (text.length() > 0 &&
         getSettings()->messageOverflow.getValue() == MessageOverflow::Highlight)
     {
         QTextCursor cursor = this->ui_.textEdit->textCursor();
         QTextCharFormat format;
-        QList<QTextEdit::ExtraSelection> selections;
 
         cursor.setPosition(qMin(text.length(), TWITCH_MESSAGE_LIMIT),
                            QTextCursor::MoveAnchor);
@@ -1012,11 +1241,34 @@ void SplitInput::editTextChanged()
             format.setForeground(Qt::red);
             selections.append({cursor, format});
         }
-        // block reemit of QTextEdit::textChanged()
+    }
+
+    if (!text.isEmpty() && this->inHistorySearch &&
+        !this->historySearchFailed && !this->historySearchQuery.isEmpty())
+    {
+        auto matchIdx =
+            text.indexOf(this->historySearchQuery, 0, Qt::CaseInsensitive);
+        if (matchIdx >= 0)
         {
-            const QSignalBlocker b(this->ui_.textEdit);
-            this->ui_.textEdit->setExtraSelections(selections);
+            QTextCursor cursor = this->ui_.textEdit->textCursor();
+            QTextCharFormat format;
+            format.setBackground(
+                getTheme()->splits.input.searchHighlightBackground);
+            format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
+
+            cursor.setPosition(static_cast<int>(matchIdx),
+                               QTextCursor::MoveAnchor);
+            cursor.setPosition(
+                static_cast<int>(matchIdx + this->historySearchQuery.size()),
+                QTextCursor::KeepAnchor);
+            selections.append({.cursor = cursor, .format = format});
         }
+    }
+
+    // block reemit of QTextEdit::textChanged()
+    {
+        const QSignalBlocker b(this->ui_.textEdit);
+        this->ui_.textEdit->setExtraSelections(selections);
     }
 
     QString labelText;
@@ -1211,6 +1463,7 @@ void SplitInput::setPlaceholderText(const QString &text)
 void SplitInput::clearInput()
 {
     this->currMsg_ = "";
+    this->stopHistorySearchIfNecessary();
     this->ui_.textEdit->setText("");
     this->ui_.textEdit->moveCursor(QTextCursor::Start);
     if (this->enableInlineReplying_)
@@ -1276,4 +1529,286 @@ int SplitInput::replyMessageWidth() const
     return this->ui_.inputWrapper->width() - 1 - 10;
 }
 
+void SplitInput::updateTextEditPalette()
+{
+    QPalette p;
+
+    // Placeholder text color
+    p.setColor(QPalette::PlaceholderText,
+               this->theme->messages.textColors.chatPlaceholder);
+
+    // Text color
+    p.setColor(QPalette::Text, this->theme->messages.textColors.regular);
+
+    // Selection background color
+    p.setBrush(QPalette::Highlight,
+               this->theme->isLightTheme()
+                   ? QColor(u"#68B1FF"_s)
+                   : this->theme->tabs.selected.backgrounds.regular);
+
+    // Background color
+    p.setBrush(QPalette::Base, this->backgroundColor());
+
+    this->ui_.textEdit->setPalette(p);
+}
+
+QColor SplitInput::backgroundColor() const
+{
+    return this->backgroundColor_;
+}
+
+void SplitInput::setBackgroundColor(QColor newColor)
+{
+    this->backgroundColor_ = newColor;
+
+    this->updateTextEditPalette();
+}
+
+std::optional<bool> SplitInput::checkSpellingOverride() const
+{
+    return this->checkSpellingOverride_;
+}
+
+void SplitInput::setCheckSpellingOverride(std::optional<bool> override)
+{
+    this->checkSpellingOverride_ = override;
+    this->checkSpellingChanged();
+}
+
+bool SplitInput::shouldCheckSpelling() const
+{
+    if (this->checkSpellingOverride_)
+    {
+        return *this->checkSpellingOverride_;
+    }
+    return getSettings()->enableSpellChecking;
+}
+
+void SplitInput::checkSpellingChanged()
+{
+    QTextDocument *target = nullptr;
+    if (this->shouldCheckSpelling())
+    {
+        target = this->ui_.textEdit->document();
+    }
+
+    if (this->inputHighlighter->document() != target)
+    {
+        this->inputHighlighter->setDocument(target);
+    }
+}
+
+void SplitInput::updateFonts()
+{
+    auto *app = getApp();
+    this->ui_.textEdit->setFont(
+        app->getFonts()->getFont(FontStyle::ChatMedium, this->scale()));
+
+    // NOTE: We're using TimestampMedium here to get a font that uses the tnum font feature,
+    // meaning numbers get equal width & don't bounce around while the user is typing.
+    auto tsMedium =
+        app->getFonts()->getFont(FontStyle::TimestampMedium, this->scale());
+    this->ui_.textEditLength->setFont(tsMedium);
+    this->ui_.sendWaitStatus->setFont(tsMedium);
+    this->ui_.replyLabel->setFont(
+        app->getFonts()->getFont(FontStyle::ChatMediumBold, this->scale()));
+
+    this->ui_.historySearchWrap->setFont(getApp()->getFonts()->getFont(
+        FontStyle::ChatMediumSmall, this->scale()));
+}
+
+void SplitInput::stopHistorySearchIfNecessary()
+{
+    if (!this->inHistorySearch || isAppAboutToQuit())
+    {
+        return;
+    }
+    this->inHistorySearch = false;
+    this->historySearchStateChanged.invoke();
+    this->ui_.historySearchWrap->hide();
+    this->split_->setFocusProxy(this->ui_.textEdit);
+    this->ui_.textEdit->setFocus();
+    this->ui_.textEdit->moveCursor(QTextCursor::End);
+    this->editTextChanged();
+}
+
+void SplitInput::startHistorySearch(bool backwards, bool loop)
+{
+    this->lastHistorySearchBackwards = backwards;
+    this->lastHistorySearchLoop = loop;
+    if (this->inHistorySearch)
+    {
+        this->cycleHistorySearch(backwards, loop);
+        return;
+    }
+    this->ui_.historySearchInput->clear();
+    this->ui_.historySearchWrap->setVisible(true);
+    this->split_->setFocusProxy(this->ui_.historySearchInput);
+    this->ui_.historySearchInput->setFocus(Qt::MouseFocusReason);
+    this->historySearchQuery = {};
+    this->inHistorySearch = true;
+    this->historySearchStateChanged.invoke();
+    this->prevIndexBeforeSearch = this->prevIndex_;
+    this->refreshHistorySearch(backwards, loop);
+}
+
+void SplitInput::refreshHistorySearch(bool backwards, bool loop)
+{
+    if (!this->inHistorySearch)
+    {
+        return;
+    }
+    this->historySearchResults.clear();
+    if (this->historySearchQuery.isEmpty())
+    {
+        this->ui_.historySearchLabel->clear();
+        this->editTextChanged();
+        return;
+    }
+    // `prevIndex_` might've changed because the user cycled through the results.
+    // However, the initial position should be used as the anchor.
+    this->prevIndex_ = this->prevIndexBeforeSearch;
+
+    qsizetype closestMatch = -1;  // initial result
+    for (qsizetype i = 0; i < this->prevMsg_.size(); i++)
+    {
+        auto message = this->prevMsg_.at(i);
+        auto matchIdx =
+            message.indexOf(this->historySearchQuery, 0, Qt::CaseInsensitive);
+        if (matchIdx >= 0)
+        {
+            this->historySearchResults.emplace_back(
+                HistorySearchResult{.messageIdx = i, .message = message});
+        }
+
+        if (i == this->prevIndex_)
+        {
+            closestMatch =
+                static_cast<qsizetype>(this->historySearchResults.size()) - 1;
+        }
+    }
+    if (this->prevIndex_ >= this->prevMsg_.size())
+    {
+        closestMatch =
+            static_cast<qsizetype>(this->historySearchResults.size()) - 1;
+    }
+
+    // `closestMatch` points at the last message that's before or at `prevIndex_`.
+    // For forwards search, we want it to be the first message not before `prevIndex_`.
+    if (!backwards && closestMatch >= 0 &&
+        static_cast<size_t>(closestMatch) < this->historySearchResults.size() &&
+        this->historySearchResults[closestMatch].messageIdx != this->prevIndex_)
+    {
+        closestMatch++;
+    }
+
+    this->historySearchResultIndex = closestMatch;
+
+    if (loop)
+    {
+        this->loopHistorySearchIfNeeded(backwards);
+    }
+
+    this->updateSelectedHistorySearchMatch();
+}
+
+void SplitInput::cycleHistorySearch(bool backwards, bool loop)
+{
+    if (backwards)
+    {
+        this->historySearchResultIndex--;
+    }
+    else
+    {
+        this->historySearchResultIndex++;
+    }
+
+    if (loop)
+    {
+        this->loopHistorySearchIfNeeded(backwards);
+    }
+
+    this->historySearchResultIndex =
+        std::clamp(this->historySearchResultIndex, -1LL,
+                   static_cast<qsizetype>(this->historySearchResults.size()));
+
+    this->updateSelectedHistorySearchMatch();
+}
+
+void SplitInput::loopHistorySearchIfNeeded(bool backwards)
+{
+    if (backwards && this->historySearchResultIndex < 0)
+    {
+        this->historySearchResultIndex =
+            static_cast<qsizetype>(this->historySearchResults.size()) - 1;
+    }
+    else if (!backwards &&
+             std::cmp_greater_equal(this->historySearchResultIndex,
+                                    this->historySearchResults.size()))
+    {
+        this->historySearchResultIndex = 0;
+    }
+}
+
+void SplitInput::updateSelectedHistorySearchMatch()
+{
+    if (this->historySearchResultIndex < 0 ||
+        std::cmp_greater_equal(this->historySearchResultIndex,
+                               this->historySearchResults.size()))
+    {
+        this->updateHistorySearchStatus(true, "no match");
+        return;
+    }
+
+    const auto &current = this->historySearchResults[static_cast<size_t>(
+        this->historySearchResultIndex)];
+
+    this->prevIndex_ = static_cast<int>(current.messageIdx);
+    this->ui_.textEdit->setText(current.message);
+
+    this->updateHistorySearchStatus(
+        false, QString::number(this->historySearchResults.size() -
+                               this->historySearchResultIndex) %
+                   '/' % QString::number(this->historySearchResults.size()));
+
+    this->editTextChanged();
+}
+
+void SplitInput::updateHistorySearchStatus(bool failed, const QString &message)
+{
+    if (failed && !this->historySearchFailed)
+    {
+        QPalette palette = this->ui_.historySearchWrap->palette();
+        auto failColor = getTheme()->splits.input.searchFailText;
+        palette.setColor(QPalette::Text, failColor);
+        palette.setColor(QPalette::WindowText, failColor);
+        this->ui_.historySearchWrap->setPalette(palette);
+    }
+    else if (!failed && this->historySearchFailed)
+    {
+        QPalette palette = this->ui_.historySearchWrap->palette();
+        palette.setColor(QPalette::Text, getTheme()->splits.input.text);
+        palette.setColor(QPalette::WindowText, getTheme()->splits.input.text);
+        this->ui_.historySearchWrap->setPalette(palette);
+    }
+    this->historySearchFailed = failed;
+
+    this->ui_.historySearchLabel->setText(message);
+}
+
+void SplitInput::setSendWaitStatus(const QString &text) const
+{
+    this->ui_.sendWaitStatus->setText(text);
+    if (text.isEmpty())
+    {
+        this->ui_.sendWaitStatus->setHidden(true);
+    }
+    else
+    {
+        this->ui_.sendWaitStatus->setHidden(!getSettings()->showSendWaitTimer);
+    }
+}
+
 }  // namespace chatterino
+
+#include "SplitInput.moc"

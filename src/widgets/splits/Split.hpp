@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2016 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include "common/Aliases.hpp"
@@ -5,7 +9,6 @@
 #include "widgets/BaseWidget.hpp"
 #include "widgets/splits/SplitCommon.hpp"
 
-#include <boost/signals2.hpp>
 #include <pajlada/signals/signalholder.hpp>
 #include <QFont>
 #include <QPointer>
@@ -61,6 +64,9 @@ public:
 
     void setModerationMode(bool value);
     bool getModerationMode() const;
+
+    std::optional<bool> checkSpellingOverride() const;
+    void setCheckSpellingOverride(std::optional<bool> override);
 
     void insertTextToInput(const QString &text);
 
@@ -123,15 +129,19 @@ private:
     void addShortcuts() override;
 
     /**
-     * @brief Opens Twitch channel stream in a browser player (opens a formatted link)
+     * @brief Opens a Twitch channel's stream in your default browser's player (opens a formatted link)
      */
     void openChannelInBrowserPlayer(ChannelPtr channel);
     /**
-     * @brief Opens Twitch channel stream in streamlink app (if stream is live and streamlink is installed)
+     * @brief Opens a Twitch channel's stream in streamlink (if the stream's live, and streamlink's installed)
      */
     void openChannelInStreamlink(const QString channelName);
     /**
-     * @brief Opens Twitch channel chat in a new Chatterino tab
+     * @brief Opens a Twitch channel's stream in your custom player (if the stream's live, and the custom player protocol's set)
+     */
+    void openChannelInCustomPlayer(QString channelName);
+    /**
+     * @brief Opens a Twitch channel's chat in a new tab
      */
     void joinChannelInNewTab(const ChannelPtr &channel);
 
@@ -142,6 +152,8 @@ private:
      * moderation actions have been changed
      **/
     void refreshModerationMode();
+
+    void refreshInputState(const QString &inputText);
 
     IndirectChannel channel_;
 
@@ -171,7 +183,6 @@ private:
     pajlada::Signals::SignalHolder channelSignalHolder_;
 
     pajlada::Signals::SignalHolder signalHolder_;
-    std::vector<boost::signals2::scoped_connection> bSignals_;
 
 public Q_SLOTS:
     void addSibling();
@@ -190,9 +201,8 @@ public Q_SLOTS:
     void openWithCustomScheme();
     void setFiltersDialog();
     void showSearch(bool singleChannel);
-    void showChatterList();
+    void openChatterList();
     void openSubPage();
-    void reloadChannelAndSubscriberEmotes();
     void reconnect();
 };
 

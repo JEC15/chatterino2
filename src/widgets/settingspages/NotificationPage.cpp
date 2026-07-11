@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2018 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "widgets/settingspages/NotificationPage.hpp"
 
 #include "Application.hpp"
@@ -59,7 +63,8 @@ NotificationPage::NotificationPage()
                     "start menu folder if needed by live notifications."
                     "\n(On portable mode, this is disabled by "
                     "default)"));
-
+#endif
+#if defined(Q_OS_WIN) || defined(CHATTERINO_WITH_LIBNOTIFY)
                 auto openIn = settings.emplace<QHBoxLayout>().withoutMargin();
                 {
                     openIn

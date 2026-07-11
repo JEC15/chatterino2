@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2018 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <QString>
@@ -6,10 +10,12 @@
 
 namespace chatterino {
 
+class Modes;
+
 class Paths
 {
 public:
-    Paths();
+    Paths(const Modes &modes);
 
     // Root directory for the configuration files. %APPDATA%/chatterino or
     // ExecutablePath for portable mode
@@ -39,14 +45,15 @@ public:
     // Custom themes live here. <appDataDirectory>/Themes
     QString themesDirectory;
 
+    // Spell checking dictionaries <appDataDirectory>/Dictionaries
+    QString dictionariesDirectory;
+
     // Directory for shared memory files.
     // <appDataDirectory>/IPC   on Windows
     // /tmp                     elsewhere
     QString ipcDirectory;
 
     bool createFolder(const QString &folderPath);
-    [[deprecated("use Modes::instance().portable instead")]] bool isPortable()
-        const;
 
     QString cacheDirectory() const;
 
@@ -58,7 +65,7 @@ public:
 private:
     void initAppFilePathHash();
     void initCheckPortable();
-    void initRootDirectory();
+    void initRootDirectory(const Modes &modes);
     void initSubDirectories();
 
     std::optional<bool> portable_;

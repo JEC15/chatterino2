@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2017 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "singletons/WindowManager.hpp"
 
 #include "Application.hpp"
@@ -135,6 +139,7 @@ WindowManager::WindowManager(const Args &appArgs_, const Paths &paths,
     this->updateWordTypeMaskListener.add(settings.showBadgesVanity);
     this->updateWordTypeMaskListener.add(settings.showBadgesChatterino);
     this->updateWordTypeMaskListener.add(settings.showBadgesFfz);
+    this->updateWordTypeMaskListener.add(settings.showBadgesBttv);
     this->updateWordTypeMaskListener.add(settings.showBadgesSevenTV);
     this->updateWordTypeMaskListener.add(settings.enableEmoteImages);
     this->updateWordTypeMaskListener.add(settings.lowercaseDomains);
@@ -151,6 +156,8 @@ WindowManager::WindowManager(const Args &appArgs_, const Paths &paths,
     this->forceLayoutChannelViewsListener.add(
         settings.removeSpacesBetweenEmotes);
     this->forceLayoutChannelViewsListener.add(settings.emoteScale);
+    this->forceLayoutChannelViewsListener.add(
+        settings.hideMessageTimestampsWhenLive);
     this->forceLayoutChannelViewsListener.add(settings.timestampFormat);
     this->forceLayoutChannelViewsListener.add(settings.collpseMessagesMinLines);
     this->forceLayoutChannelViewsListener.add(settings.enableRedeemedHighlight);
@@ -163,9 +170,11 @@ WindowManager::WindowManager(const Args &appArgs_, const Paths &paths,
         settings.streamerModeHideModActions);
     this->forceLayoutChannelViewsListener.add(
         settings.streamerModeHideRestrictedUsers);
+    this->forceLayoutChannelViewsListener.add(fonts.fontChanged);
 
+    this->layoutChannelViewsListener.add(
+        settings.hideMessageTimestampsWhenLive);
     this->layoutChannelViewsListener.add(settings.timestampFormat);
-    this->layoutChannelViewsListener.add(fonts.fontChanged);
 
     this->invalidateChannelViewBuffersListener.add(settings.alternateMessages);
     this->invalidateChannelViewBuffersListener.add(settings.separateMessages);
@@ -209,7 +218,7 @@ void WindowManager::updateWordTypeMask()
     // emotes
     if (settings->enableEmoteImages)
     {
-        flags.set(MEF::EmoteImages);
+        flags.set(MEF::EmoteImage);
     }
     flags.set(MEF::EmoteText);
     flags.set(MEF::EmojiText);
@@ -232,6 +241,7 @@ void WindowManager::updateWordTypeMask()
     flags.set(settings->showBadgesChatterino ? MEF::BadgeChatterino
                                              : MEF::None);
     flags.set(settings->showBadgesFfz ? MEF::BadgeFfz : MEF::None);
+    flags.set(settings->showBadgesBttv ? MEF::BadgeBttv : MEF::None);
     flags.set(settings->showBadgesSevenTV ? MEF::BadgeSevenTV : MEF::None);
 
     // username
@@ -314,6 +324,9 @@ Window &WindowManager::createWindow(WindowType type, bool show, QWidget *parent)
     assertInGuiThread();
 
     auto *const realParent = [this, type, parent]() -> QWidget * {
+        (void)this;
+        (void)type;
+
         if (parent)
         {
             // If a parent is explicitly specified, we use that immediately.
@@ -350,7 +363,7 @@ Window &WindowManager::createWindow(WindowType type, bool show, QWidget *parent)
     {
         window->setAttribute(Qt::WA_DeleteOnClose);
 
-        QObject::connect(window, &QWidget::destroyed, [this, window] {
+        QObject::connect(window, &QWidget::destroyed, this, [this, window] {
             for (auto it = this->windows_.begin(); it != this->windows_.end();
                  it++)
             {
@@ -635,6 +648,11 @@ std::set<QString> WindowManager::getVisibleChannelNames() const
     return visible;
 }
 
+std::span<Window *const> WindowManager::windows() const
+{
+    return this->windows_;
+}
+
 void WindowManager::encodeTab(SplitContainer *tab, bool isSelected,
                               QJsonObject &obj)
 {
@@ -677,6 +695,12 @@ void WindowManager::encodeNodeRecursively(SplitNode *node, QJsonObject &obj)
             QJsonArray filters;
             WindowManager::encodeFilters(node->getSplit(), filters);
             obj.insert("filters", filters);
+
+            auto spellOverride = node->getSplit()->checkSpellingOverride();
+            if (spellOverride)
+            {
+                obj["checkSpelling"] = *spellOverride;
+            }
         }
         break;
         case SplitNode::Type::HorizontalContainer:
@@ -687,7 +711,7 @@ void WindowManager::encodeNodeRecursively(SplitNode *node, QJsonObject &obj)
                            : "vertical");
 
             QJsonArray itemsArr;
-            for (const std::unique_ptr<SplitNode> &n : node->getChildren())
+            for (const auto &n : node->getChildren())
             {
                 QJsonObject subObj;
                 WindowManager::encodeNodeRecursively(n.get(), subObj);
@@ -696,6 +720,9 @@ void WindowManager::encodeNodeRecursively(SplitNode *node, QJsonObject &obj)
             obj.insert("items", itemsArr);
         }
         break;
+
+        default:
+            break;
     }
 
     obj.insert("flexh", node->getHorizontalFlex());
@@ -706,37 +733,25 @@ void WindowManager::encodeChannel(IndirectChannel channel, QJsonObject &obj)
 {
     assertInGuiThread();
 
+    obj.insert("type", qmagicenum::enumNameString(channel.getType()));
     switch (channel.getType())
     {
-        case Channel::Type::Twitch: {
-            obj.insert("type", "twitch");
+        case Channel::Type::Twitch:
+        case Channel::Type::Misc:
             obj.insert("name", channel.get()->getName());
-        }
-        break;
-        case Channel::Type::TwitchAutomod: {
-            obj.insert("type", "automod");
-        }
-        break;
-        case Channel::Type::TwitchMentions: {
-            obj.insert("type", "mentions");
-        }
-        break;
-        case Channel::Type::TwitchWatching: {
-            obj.insert("type", "watching");
-        }
-        break;
-        case Channel::Type::TwitchWhispers: {
-            obj.insert("type", "whispers");
-        }
-        break;
-        case Channel::Type::TwitchLive: {
-            obj.insert("type", "live");
-        }
-        break;
-        case Channel::Type::Misc: {
-            obj.insert("type", "misc");
-            obj.insert("name", channel.get()->getName());
-        }
+            break;
+
+        case Channel::Type::TwitchWhispers:
+        case Channel::Type::TwitchWatching:
+        case Channel::Type::TwitchMentions:
+        case Channel::Type::TwitchLive:
+        case Channel::Type::TwitchAutomod:
+
+        // FIXME: Remove these (#5703)
+        case Channel::Type::None:
+        case Channel::Type::Direct:
+        case Channel::Type::TwitchEnd:
+            break;
     }
 }
 
@@ -751,43 +766,6 @@ void WindowManager::encodeFilters(Split *split, QJsonArray &arr)
     }
 }
 
-IndirectChannel WindowManager::decodeChannel(const SplitDescriptor &descriptor)
-{
-    assertInGuiThread();
-
-    if (descriptor.type_ == "twitch")
-    {
-        return getApp()->getTwitch()->getOrAddChannel(descriptor.channelName_);
-    }
-    else if (descriptor.type_ == "mentions")
-    {
-        return getApp()->getTwitch()->getMentionsChannel();
-    }
-    else if (descriptor.type_ == "watching")
-    {
-        return getApp()->getTwitch()->getWatchingChannel();
-    }
-    else if (descriptor.type_ == "whispers")
-    {
-        return getApp()->getTwitch()->getWhispersChannel();
-    }
-    else if (descriptor.type_ == "live")
-    {
-        return getApp()->getTwitch()->getLiveChannel();
-    }
-    else if (descriptor.type_ == "automod")
-    {
-        return getApp()->getTwitch()->getAutomodChannel();
-    }
-    else if (descriptor.type_ == "misc")
-    {
-        return getApp()->getTwitch()->getChannelOrEmpty(
-            descriptor.channelName_);
-    }
-
-    return Channel::getEmpty();
-}
-
 void WindowManager::closeAll()
 {
     assertInGuiThread();
@@ -795,7 +773,7 @@ void WindowManager::closeAll()
     qCDebug(chatterinoWindowmanager) << "Shutting down (closing windows)";
     this->shuttingDown_ = true;
 
-    for (Window *window : windows_)
+    for (Window *window : this->windows_)
     {
         closeWindowsRecursive(window);
     }
@@ -923,6 +901,9 @@ void WindowManager::applyWindowLayout(const WindowLayout &layout)
                 window.setWindowState(Qt::WindowMaximized);
             }
             break;
+
+            case WindowDescriptor::State::None:
+                break;
         }
     }
 }

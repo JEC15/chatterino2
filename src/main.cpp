@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2016 Contributors to Chatterino <https://chatterino.com>
+//
+// SPDX-License-Identifier: MIT
+
 #include "BrowserExtension.hpp"
 #include "common/Args.hpp"
 #include "common/Env.hpp"
@@ -9,6 +13,7 @@
 #include "providers/twitch/api/Helix.hpp"
 #include "RunGui.hpp"
 #include "singletons/CrashHandler.hpp"
+#include "singletons/FileLogger.hpp"
 #include "singletons/Paths.hpp"
 #include "singletons/Settings.hpp"
 #include "singletons/Updates.hpp"
@@ -28,6 +33,7 @@
 #    include <shobjidl_core.h>
 #endif
 
+#include <iostream>
 #include <memory>
 
 using namespace chatterino;
@@ -40,19 +46,24 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationVersion(CHATTERINO_VERSION);
     QCoreApplication::setOrganizationDomain("chatterino.com");
 #ifdef Q_OS_WIN
-    SetCurrentProcessExplicitAppUserModelID(L"ChatterinoTeam.Chatterino");
+    SetCurrentProcessExplicitAppUserModelID(
+        Version::instance().appUserModelID().c_str());
 #endif
 
+    const Modes modes;
     std::unique_ptr<Paths> paths;
+
+    // Optional logger override that logs to a file
+    FileLogger logger;
 
     try
     {
-        paths = std::make_unique<Paths>();
+        paths = std::make_unique<Paths>(modes);
     }
     catch (std::runtime_error &error)
     {
         QMessageBox box;
-        if (Modes::instance().isPortable)
+        if (modes.isPortable)
         {
             auto errorMessage =
                 error.what() +
@@ -97,8 +108,7 @@ int main(int argc, char **argv)
             QString("%1 (commit %2%3)")
                 .arg(version.fullVersion())
                 .arg(version.commitHash())
-                .arg(Modes::instance().isNightly ? ", " + version.dateOfBuild()
-                                                 : "");
+                .arg(version.isNightly() ? ", " + version.dateOfBuild() : "");
         std::cout << versionMessage.toLocal8Bit().constData() << '\n';
         std::cout.flush();
     }
@@ -115,29 +125,27 @@ int main(int argc, char **argv)
         qCInfo(chatterinoApp).noquote()
             << "Chatterino Qt SSL library version:"
             << QSslSocket::sslLibraryVersionString();
-#if QT_VERSION >= QT_VERSION_CHECK(6, 1, 0)
         qCInfo(chatterinoApp).noquote()
             << "Chatterino Qt SSL active backend:"
             << QSslSocket::activeBackend() << "of"
             << QSslSocket::availableBackends().join(", ");
-#    if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
         qCInfo(chatterinoApp) << "Chatterino Qt SSL active backend features:"
                               << QSslSocket::supportedFeatures();
-#    endif
+#endif
         qCInfo(chatterinoApp) << "Chatterino Qt SSL active backend protocols:"
                               << QSslSocket::supportedProtocols();
-#endif
 
-        Settings settings(args, paths->settingsDirectory);
+        Settings settings(modes, args, paths->settingsDirectory);
 
-        Updates updates(*paths, settings);
+        Updates updates(modes, *paths, settings);
 
         NetworkConfigurationProvider::applyFromEnv(Env::get());
 
         IvrApi::initialize();
         Helix::initialize();
 
-        runGui(a, *paths, settings, args, updates);
+        runGui(a, modes, *paths, settings, args, updates);
     }
     return 0;
 }
